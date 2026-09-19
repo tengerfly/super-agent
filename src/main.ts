@@ -1,26 +1,46 @@
 import "dotenv/config";
-import { AgentLoop } from "./agent/loop.ts";
-import { type ModelMessage } from "ai";
+import { AgentLoop } from "./agent/agent-loop.ts";
+import { tool, type ModelMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { z } from "zod";
+import modelManager from "./model/index.ts";
+
+const model = modelManager.getModel();
 
 export default function bootstrap() {
   console.log("bootstrap");
-  const modelConfig = {
-    // name: process.env.OPENAI_MODEL || "qwen-plus",
-    baseURL: process.env.OPENAI_BASE_URL as string,
-    apiKey: process.env.OPENAI_API_KEY as string,
-  };
-  // createOpenAI;
-  const provider = createOpenAI(modelConfig);
-  const model = provider.chat(process.env.OPENAI_MODEL || "qwen-plus");
+
   const messages: ModelMessage[] = [
     {
       role: "user",
       content: "帮我查下上海的天气情况",
     },
   ];
-  const systemPrompt = `你是一个专注于编程领域的AI助手。你可以解决任何编程问题，帮助查找官方文档并给出用法demo；也可以帮助解决bug；更可以写代码，写代码的时候要先规划好之后才能动手。回答要简洁，保证正确率，根据用户的需求，否则不能任意发挥。`;
-  AgentLoop({ model, messages, tools: undefined, systemPrompt });
+  const systemPrompt = `你是一个专注于编程领域的AI助手。你可以解决任何编程问题，帮助查找官方文档并给出用法demo；也可以帮助解决bug；更可以写代码，写代码的时候要先规划好之后才能动手。回答要简洁，保证正确率，根据用户的需求，否则不能任意发挥。询问某个城市的天气是用get_weather_custom这个工具`;
+  const tools = {
+    get_weather_custom: tool({
+      description: "获取指定城市的当前天气",
+      inputSchema: z.object({
+        city: z.string().describe("城市名称，例如：北京、上海"),
+      }),
+      execute: async ({ city }: { city: string }) => {
+        console.log("city", city);
+        return `${city}今天是晴天，气温 25 度`;
+      },
+    }),
+
+    calculate: tool({
+      description: "执行数学计算",
+      inputSchema: z.object({
+        expression: z.string().describe("数学表达式，例如：2 + 3 * 4"),
+      }),
+      execute: async ({ expression }: { expression: string }) => {
+        return eval(expression).toString();
+      },
+    }),
+  };
+
+  AgentLoop({ model, messages, tools, systemPrompt });
 }
 
 /**

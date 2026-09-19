@@ -6,6 +6,7 @@ import {
   type LanguageModelUsage,
 } from "ai";
 import { isRetryable, calculateDelay, sleep } from "./retry.ts";
+import { zodToJsonSchema } from "zod-to-json-schema";
 const MAX_STEPS = 30; // 最大轮询次数
 const MAX_RETRIES = 3; // 最多重试次数
 const MAX_TOTAL_TOKEN = 5000; // 最大token
@@ -42,18 +43,43 @@ export async function AgentLoop(options: LoopConfigInterface) {
     //    attempt++;
     //  }
     // }
+    // console.log("tools 结构:", JSON.stringify(tools, null, 2));
+
     for (let attempt = 1; ; attempt++) {
       try {
         // const error = new Error("529, too many requests, await fetch");
         // throw error;
+        // console.log(
+        //   "发给 LLM 的工具定义（推测）:",
+        //   JSON.stringify(
+        //     zodToJsonSchema(tools.get_weather_custom.parameters),
+        //     null,
+        //     2,
+        //   ),
+        // );
         const result = streamText({
           model,
           system: systemPrompt,
           messages,
           tools,
           maxRetries: 0, // 使用外层控制循环次数
+          // toolChoice: "required", // 强制模型必须调工具
+          onStepFinish: ({ toolCalls, toolResults }) => {
+            // console.log("本轮 toolCalls:", JSON.stringify(toolCalls, null, 2));
+            // console.log(
+            //   "本轮 toolResults:",
+            //   JSON.stringify(toolResults, null, 2),
+            // );
+          },
+          /****
+           * stopWhen: 内部多步循环的时候的终止条件。
+           * SDK集成了一些操作，工具调用，结果push到messages
+           * 这本来是两轮的循环，SDK集成为一次循环。
+           * 设计的目的是方便开发减少每次push的胶水代码。
+           * ******/
+          // stopWhen: isLoopFinished(), //
         });
-
+        // console.log("res-111", result);
         // 遍历流事件
         for await (const part of result.stream) {
           switch (part.type) {
@@ -92,7 +118,7 @@ export async function AgentLoop(options: LoopConfigInterface) {
 
             // 5. 工具执行结果
             case "tool-result": {
-              console.log("工具结果:", part.output);
+              console.log("工具结果:", part.output + "666;");
               break;
             }
 
@@ -103,11 +129,14 @@ export async function AgentLoop(options: LoopConfigInterface) {
             }
           }
         }
+        // console.log("stepResponse-result", result);
         stepResponse = await result.responseMessages;
+        // stepResponse = await result.response;
         stepUsage = await result.usage;
         finishReason = await result.finishReason; // 结束原因
         break;
       } catch (error: any) {
+        console.log("error", error);
         // 在这里处理http异常
         if (isRetryable(error)) {
           console.log("重试:", error.message);
@@ -125,10 +154,12 @@ export async function AgentLoop(options: LoopConfigInterface) {
         }
       }
     }
-    messages.push(...stepResponse);
+    if (Array.isArray(stepResponse)) {
+      messages.push(...stepResponse);
+    }
     console.log(`\n\n第${step}轮`);
     console.log("\n\nreason", finishReason);
-    console.log("\n\nusage", stepUsage);
+    // console.log("\n\nusage", stepUsage);
     // token超出退出
     if (stepUsage?.totalTokens && stepUsage?.totalTokens > MAX_TOTAL_TOKEN) {
       console.log(`token 超过${MAX_TOTAL_TOKEN}`);
@@ -143,6 +174,7 @@ export async function AgentLoop(options: LoopConfigInterface) {
       console.log("结束退出\n\n");
       break;
     }
+    // 我在只写了询问上海天气的时候发现走了两轮是因为finishReason=tool-calls，如果加上stopWhen: isLoopFinished() 就会只有一轮，因为streamText内部会判断后续没有可执行的操作了，把后边的操作强制中断。
   }
 }
 
